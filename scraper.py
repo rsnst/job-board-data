@@ -12,6 +12,7 @@ import csv
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import urllib.error
@@ -27,7 +28,7 @@ SHARD_DIR = os.path.join(DATA_DIR, "shards")
 WORKERS = int(os.environ.get("SCRAPE_WORKERS", "16"))
 TIMEOUT = 20
 RETRIES = 2
-SUPPORTED = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "bamboohr", "breezy", "rippling", "recruitee", "pinpoint", "gem", "teamtailor", "workday"}
+SUPPORTED = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "bamboohr", "breezy", "rippling", "recruitee", "pinpoint", "gem", "teamtailor", "workday", "paylocity"}
 UA = "job-board-search/1.0 (+public job list reader)"
 
 
@@ -336,7 +337,9 @@ def main():
     boards = load_boards()
     if limit:
         boards = boards[:limit]
-    print("boards to scrape:", len(boards), flush=True)
+    pl_boards = [b for b in boards if b["ats"] == "paylocity"]
+    boards = [b for b in boards if b["ats"] != "paylocity"]
+    print("boards to scrape:", len(boards), "browser boards:", len(pl_boards), flush=True)
 
     shards = {}
     status = {}
@@ -361,6 +364,27 @@ def main():
             if done % 500 == 0 or done == len(boards):
                 print("progress %d/%d" % (done, len(boards)), flush=True)
 
+    if pl_boards:
+        stamp = datetime.now(timezone.utc).isoformat()
+        try:
+            import browser_paylocity
+            pl_res = browser_paylocity.run(pl_boards, concurrency=int(os.environ.get("PL_CONCURRENCY", "8")), log=print)
+        except Exception as e:
+            print("browser phase failed:", e, flush=True)
+            pl_res = {}
+        for b in pl_boards:
+            r = pl_res.get(b["id"], {"ok": False, "error": "no result"})
+            if r["ok"]:
+                for j in r["jobs"]:
+                    j.update({"company": b["company"], "ats": "paylocity", "boardId": b["id"]})
+                    shards.setdefault(shard_key(b["company"]), []).append(j)
+                status[b["id"]] = {"ok": True, "jobs": len(r["jobs"]), "checked": stamp}
+            else:
+                status[b["id"]] = {"ok": False, "error": r["error"], "checked": stamp}
+
+    # fresh start: clear the previous output only after a full scrape finished
+    if os.path.isdir(DATA_DIR):
+        shutil.rmtree(DATA_DIR)
     os.makedirs(SHARD_DIR, exist_ok=True)
     for key, jobs in shards.items():
         jobs.sort(key=lambda j: (j["company"].lower(), j["title"].lower()))
@@ -370,7 +394,7 @@ def main():
     total_jobs = sum(len(v) for v in shards.values())
     index = {
         "updated": datetime.now(timezone.utc).isoformat(),
-        "boards_scraped": len(boards),
+        "boards_scraped": len(boards) + len(pl_boards),
         "boards_ok": sum(1 for s in status.values() if s["ok"]),
         "boards_failed": sum(1 for s in status.values() if not s["ok"]),
         "jobs": total_jobs,
