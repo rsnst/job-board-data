@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scrape public job boards (Greenhouse, Lever, Ashby) into static JSON shards.
+"""Scrape public job boards (12 ATS platforms) into static JSON shards.
 
 Reads boards.csv (company, ats, slug, status), fetches each board's public
 job list, and writes:
@@ -27,7 +27,7 @@ SHARD_DIR = os.path.join(DATA_DIR, "shards")
 WORKERS = int(os.environ.get("SCRAPE_WORKERS", "16"))
 TIMEOUT = 20
 RETRIES = 2
-SUPPORTED = {"greenhouse", "lever", "ashby"}
+SUPPORTED = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "bamboohr", "breezy", "rippling", "recruitee", "pinpoint", "gem", "teamtailor"}
 UA = "job-board-search/1.0 (+public job list reader)"
 
 
@@ -96,7 +96,165 @@ def fetch_ashby(board):
     return out
 
 
-FETCHERS = {"greenhouse": fetch_greenhouse, "lever": fetch_lever, "ashby": fetch_ashby}
+def _loc_join(*parts):
+    return ", ".join(p for p in parts if p)
+
+
+def fetch_smartrecruiters(board):
+    out = []
+    offset = 0
+    while True:
+        data = fetch_json("https://api.smartrecruiters.com/v1/companies/%s/postings?limit=100&offset=%d" % (urllib.parse.quote(board["slug"]), offset))
+        content = data.get("content", []) or []
+        for j in content:
+            if (j.get("visibility") or "PUBLIC") != "PUBLIC":
+                continue
+            loc = j.get("location") or {}
+            out.append({
+                "id": "%s__%s" % (board["id"], j.get("id")),
+                "title": j.get("name") or "Untitled",
+                "location": loc.get("fullLocation") or _loc_join(loc.get("city"), loc.get("region"), loc.get("country")),
+                "url": "https://jobs.smartrecruiters.com/%s/%s" % (board["slug"], j.get("id")),
+                "postedAt": j.get("releasedDate") or "",
+            })
+        offset += 100
+        if not content or offset >= (data.get("totalFound") or 0) or offset >= 5000:
+            break
+    return out
+
+
+def fetch_workable(board):
+    data = fetch_json("https://apply.workable.com/api/v1/widget/accounts/%s?details=true" % urllib.parse.quote(board["slug"]))
+    out = []
+    for j in data.get("jobs", []) or []:
+        out.append({
+            "id": "%s__%s" % (board["id"], j.get("shortcode")),
+            "title": j.get("title") or "Untitled",
+            "location": _loc_join(j.get("city"), j.get("state"), j.get("country")) or ("Remote" if j.get("telecommuting") else ""),
+            "url": j.get("url") or "",
+            "postedAt": j.get("published_on") or j.get("created_at") or "",
+        })
+    return out
+
+
+def fetch_bamboohr(board):
+    data = fetch_json("https://%s.bamboohr.com/careers/list" % urllib.parse.quote(board["slug"]))
+    out = []
+    for j in data.get("result", []) or []:
+        loc = j.get("location") or {}
+        out.append({
+            "id": "%s__%s" % (board["id"], j.get("id")),
+            "title": (j.get("jobOpeningName") or "Untitled").strip(),
+            "location": _loc_join(loc.get("city"), loc.get("state")) or ("Remote" if j.get("isRemote") else ""),
+            "url": "https://%s.bamboohr.com/careers/%s" % (board["slug"], j.get("id")),
+            "postedAt": "",
+        })
+    return out
+
+
+def fetch_breezy(board):
+    data = fetch_json("https://%s.breezy.hr/json" % urllib.parse.quote(board["slug"]))
+    out = []
+    for j in data if isinstance(data, list) else []:
+        loc = j.get("location") or {}
+        city = loc.get("city") or ""
+        state = (loc.get("state") or {}).get("name") or ""
+        out.append({
+            "id": "%s__%s" % (board["id"], j.get("id")),
+            "title": j.get("name") or "Untitled",
+            "location": _loc_join(city, state) or ("Remote" if loc.get("is_remote") else ""),
+            "url": j.get("url") or "",
+            "postedAt": j.get("published_date") or "",
+        })
+    return out
+
+
+def fetch_rippling(board):
+    data = fetch_json("https://api.rippling.com/platform/api/ats/v1/board/%s/jobs" % urllib.parse.quote(board["slug"]))
+    out = []
+    for j in data if isinstance(data, list) else []:
+        out.append({
+            "id": "%s__%s" % (board["id"], j.get("uuid")),
+            "title": j.get("name") or "Untitled",
+            "location": (j.get("workLocation") or {}).get("label") or "",
+            "url": j.get("url") or "",
+            "postedAt": "",
+        })
+    return out
+
+
+def fetch_recruitee(board):
+    data = fetch_json("https://%s.recruitee.com/api/offers/" % urllib.parse.quote(board["slug"]))
+    out = []
+    for j in data.get("offers", []) or []:
+        out.append({
+            "id": "%s__%s" % (board["id"], j.get("id")),
+            "title": j.get("title") or "Untitled",
+            "location": _loc_join(j.get("city"), j.get("state_name"), j.get("country")) or ("Remote" if j.get("remote") else ""),
+            "url": j.get("careers_url") or "",
+            "postedAt": j.get("published_at") or "",
+        })
+    return out
+
+
+def fetch_pinpoint(board):
+    data = fetch_json("https://%s.pinpointhq.com/postings.json" % urllib.parse.quote(board["slug"]))
+    out = []
+    for j in data.get("data", []) or []:
+        loc = j.get("location") or {}
+        out.append({
+            "id": "%s__%s" % (board["id"], j.get("id")),
+            "title": j.get("title") or "Untitled",
+            "location": (loc.get("name") if isinstance(loc, dict) else "") or j.get("workplace_type_text") or "",
+            "url": j.get("url") or "",
+            "postedAt": "",
+        })
+    return out
+
+
+def fetch_gem(board):
+    data = fetch_json("https://api.gem.com/job_board/v0/%s/job_posts/" % urllib.parse.quote(board["slug"]))
+    out = []
+    for j in data if isinstance(data, list) else []:
+        loc = j.get("location") or {}
+        out.append({
+            "id": "%s__%s" % (board["id"], j.get("id")),
+            "title": j.get("title") or "Untitled",
+            "location": (loc.get("name") if isinstance(loc, dict) else "") or "",
+            "url": j.get("absolute_url") or "",
+            "postedAt": j.get("first_published_at") or "",
+        })
+    return out
+
+
+def fetch_teamtailor(board):
+    data = fetch_json("https://%s.teamtailor.com/jobs.json" % urllib.parse.quote(board["slug"]))
+    out = []
+    for j in data.get("items", []) or []:
+        out.append({
+            "id": "%s__%s" % (board["id"], j.get("id")),
+            "title": j.get("title") or "Untitled",
+            "location": "",
+            "url": j.get("url") or "",
+            "postedAt": j.get("date_published") or "",
+        })
+    return out
+
+
+FETCHERS = {
+    "greenhouse": fetch_greenhouse,
+    "lever": fetch_lever,
+    "ashby": fetch_ashby,
+    "smartrecruiters": fetch_smartrecruiters,
+    "workable": fetch_workable,
+    "bamboohr": fetch_bamboohr,
+    "breezy": fetch_breezy,
+    "rippling": fetch_rippling,
+    "recruitee": fetch_recruitee,
+    "pinpoint": fetch_pinpoint,
+    "gem": fetch_gem,
+    "teamtailor": fetch_teamtailor,
+}
 
 
 def board_id(ats, slug):
