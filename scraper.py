@@ -27,7 +27,7 @@ SHARD_DIR = os.path.join(DATA_DIR, "shards")
 WORKERS = int(os.environ.get("SCRAPE_WORKERS", "16"))
 TIMEOUT = 20
 RETRIES = 2
-SUPPORTED = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "bamboohr", "breezy", "rippling", "recruitee", "pinpoint", "gem", "teamtailor"}
+SUPPORTED = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "bamboohr", "breezy", "rippling", "recruitee", "pinpoint", "gem", "teamtailor", "workday"}
 UA = "job-board-search/1.0 (+public job list reader)"
 
 
@@ -241,6 +241,52 @@ def fetch_teamtailor(board):
     return out
 
 
+def post_json(url, body):
+    data = json.dumps(body).encode("utf-8")
+    last_err = None
+    for attempt in range(RETRIES + 1):
+        try:
+            req = urllib.request.Request(url, data=data, method="POST",
+                                         headers={"User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as res:
+                return json.loads(res.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code in (404, 410, 422):
+                break
+            if e.code == 429:
+                time.sleep(5 * (attempt + 1))
+        except Exception as e:
+            last_err = e
+            time.sleep(1 + attempt)
+    raise last_err
+
+
+def fetch_workday(board):
+    host, site = board["slug"].split("--", 1)
+    tenant = host.split(".")[0]
+    url = "https://%s/wday/cxs/%s/%s/jobs" % (host, tenant, site)
+    out = []
+    offset = 0
+    while True:
+        data = post_json(url, {"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": ""})
+        postings = data.get("jobPostings") or []
+        total = data.get("total") or 0
+        for j in postings:
+            path = j.get("externalPath") or ""
+            out.append({
+                "id": "%s__%s" % (board["id"], path),
+                "title": j.get("title") or "Untitled",
+                "location": j.get("locationsText") or "",
+                "url": "https://%s/%s%s" % (host, site, path),
+                "postedAt": j.get("postedOn") or "",
+            })
+        offset += 20
+        if not postings or offset >= total or offset >= 2000:
+            break
+    return out
+
+
 FETCHERS = {
     "greenhouse": fetch_greenhouse,
     "lever": fetch_lever,
@@ -254,6 +300,7 @@ FETCHERS = {
     "pinpoint": fetch_pinpoint,
     "gem": fetch_gem,
     "teamtailor": fetch_teamtailor,
+    "workday": fetch_workday,
 }
 
 
