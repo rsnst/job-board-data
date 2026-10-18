@@ -37,10 +37,11 @@ async def _scrape_one(context, board, sem, results, timeout_ms):
     async with sem:
         page = await context.new_page()
         try:
+            await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ("image", "font", "stylesheet", "media") else route.continue_())
             url = "%s/recruiting/jobs/All/%s" % (BASE, board["slug"])
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             try:
-                await page.wait_for_selector("div.job-listing-job-item", timeout=6000)
+                await page.wait_for_selector("div.job-listing-job-item", timeout=2000)
             except Exception:
                 pass  # empty board, or the list did not render in time
             rows = await page.evaluate(EXTRACT_JS)

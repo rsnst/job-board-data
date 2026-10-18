@@ -368,7 +368,7 @@ def main():
         stamp = datetime.now(timezone.utc).isoformat()
         try:
             import browser_paylocity
-            pl_res = browser_paylocity.run(pl_boards, concurrency=int(os.environ.get("PL_CONCURRENCY", "8")), log=print)
+            pl_res = browser_paylocity.run(pl_boards, concurrency=24, log=print)
         except Exception as e:
             print("browser phase failed:", e, flush=True)
             pl_res = {}
