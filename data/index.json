@@ -1,9 +1,9 @@
 {
-  "updated": "2026-11-02T14:24:22.248569+00:00",
+  "updated": "2026-11-03T13:45:39.018435+00:00",
   "boards_scraped": 48018,
-  "boards_ok": 46866,
-  "boards_failed": 1152,
-  "jobs": 1078836,
+  "boards_ok": 46658,
+  "boards_failed": 1360,
+  "jobs": 1053191,
   "shards": [
     "0",
     "1",
